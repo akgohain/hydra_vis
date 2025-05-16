@@ -50,14 +50,14 @@ def trimesh_to_pyvista(mesh):
         pd_mesh.point_data['Colors'] = colors
     return pd_mesh
 
-def render_scene(neuron_mesh_dir, vesicle_mesh_dir, offsets_csv):
+def render_scene(neuron_mesh_dir, vesicle_mesh_dir, offsets_csv, show_plotter=True, camera_position=None, screenshot_path='scene.png'):
     offsets = load_offsets(offsets_csv)
 
     neurons = load_trimesh_objs(neuron_mesh_dir)
 
     vesicles = load_vesicle_trimesh_objs(vesicle_mesh_dir)
 
-    plotter = pv.Plotter()
+    plotter = pv.Plotter(off_screen=not show_plotter)
 
     for name, mesh in neurons.items():
         offset = offsets.get(name, np.array([0, 0, 0]))
@@ -72,4 +72,10 @@ def render_scene(neuron_mesh_dir, vesicle_mesh_dir, offsets_csv):
             pd_vmesh = trimesh_to_pyvista(vmesh)
             plotter.add_mesh(pd_vmesh, name=f'vesicle_{neuron_id}', show_scalar_bar=False)
 
-    plotter.show()
+    if camera_position:
+        plotter.camera_position = camera_position
+
+    if show_plotter:
+        plotter.show()
+    else:
+        img = plotter.show(screenshot=screenshot_path)
