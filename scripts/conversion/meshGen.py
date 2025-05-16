@@ -14,6 +14,20 @@ from matplotlib import colors as mcolors
 # from tqdm import tqdm
 
 def neuron_to_mesh(file_path, output_obj_path, output_format="obj", apply_binary_closing=True, apply_gaussian_filter=True, fix_gaps_x_axis=True):
+    """
+    Converts a neuron mask from an HDF5 file to a 3D mesh and saves it in a specified format.
+    This function takes a file path to an HDF5 file containing a neuron mask, preprocesses the mask,
+    generates a mesh using marching cubes, and saves the mesh to a specified output path in a given format.
+    Args:
+        file_path (str): Path to the HDF5 file containing the neuron mask. The HDF5 file should contain a dataset named "main".
+        output_obj_path (str): Path to save the generated mesh file.
+        output_format (str, optional): The format to save the mesh in (e.g., "obj", "stl", "ply"). Defaults to "obj".
+        apply_binary_closing (bool, optional): Whether to apply binary closing to the mask. Defaults to True.
+        apply_gaussian_filter (bool, optional): Whether to apply a Gaussian filter to the mask. Defaults to True.
+        fix_gaps_x_axis (bool, optional): Whether to fix gaps along the X-axis using linear interpolation. Defaults to True.
+    Returns:
+        None: The function saves a mesh file to the specified output path.  Prints status and error messages to the console.
+    """
     with h5py.File(file_path, "r") as f:
         dataset = f["main"]
         mask_shape = dataset.shape
