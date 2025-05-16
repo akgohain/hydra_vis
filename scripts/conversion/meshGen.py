@@ -192,8 +192,3 @@ def compute_vertex_colors(df, color_by=None, colormap="viridis"):
     rgba = cmap(norm(values))
     rgb255 = (rgba * 255).astype(np.uint8)
     return rgb255
-
-vesicles_to_mesh(
-    parquet_path="/Users/adamg/Downloads/mappingPlay/static/vesicles.parquet",
-    output_path="vesicles_gray.obj"
-)
