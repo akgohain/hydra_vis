@@ -35,15 +35,16 @@ def compute_vertex_colors(df, color_by=None, colormap="viridis"):
     return rgb255
 
 
-def plotly_vesicles_on_neuron(
+def vesicles_to_plotly(
     parquet_path,
-    neuron_mesh_path,
+    neuron_mesh_path=None,
     filter_sample_id=None,
     color_by=None,
     colormap="viridis",
     output_html_path=None,
     marker_size=3,
-    verbose=True
+    verbose=True,
+    neuron_opacity=0.3
 ):
     """
     Loads a neuron mesh and vesicle COMs from a parquet file, optionally filters by sample,
@@ -51,19 +52,19 @@ def plotly_vesicles_on_neuron(
 
     Parameters:
     - parquet_path (str or Path): Parquet file with x, y, z, radius and optional metadata.
-    - neuron_mesh_path (str or Path): Path to neuron mesh file (.obj, .ply, .glb, etc).
+    - neuron_mesh_path (str or Path, optional): Path to neuron mesh file (.obj, .ply, .glb, etc).
     - filter_sample_id (str, optional): If specified, filters vesicles by sample_id.
     - color_by (str or list of str): Column(s) in Parquet to color vesicles by.
     - colormap (str or callable): Colormap used to color points.
     - output_html_path (str or Path, optional): Saves the interactive plot to this path.
     - marker_size (int): Marker size for vesicles.
     - verbose (bool): Print progress updates.
+    - neuron_opacity (float): Opacity of the neuron mesh.
 
     Returns:
     - fig (plotly.graph_objects.Figure): The interactive Plotly figure.
     """
     parquet_path = Path(parquet_path)
-    neuron_mesh_path = Path(neuron_mesh_path)
 
     if verbose:
         print(f"Loading vesicle data from {parquet_path}...")
@@ -78,25 +79,29 @@ def plotly_vesicles_on_neuron(
     if not required_cols.issubset(set(df.columns)):
         raise ValueError(f"Parquet must contain at least these columns: {required_cols}")
 
-    if verbose:
-        print(f"Loading neuron mesh from {neuron_mesh_path}...")
-    neuron_mesh = trimesh.load(neuron_mesh_path, process=False)
+    data = []
+    if neuron_mesh_path:
+        neuron_mesh_path = Path(neuron_mesh_path)
+        if verbose:
+            print(f"Loading neuron mesh from {neuron_mesh_path}...")
+        neuron_mesh = trimesh.load(neuron_mesh_path, process=False)
 
-    if neuron_mesh.is_empty:
-        raise ValueError("Neuron mesh is empty.")
+        if neuron_mesh.is_empty:
+            raise ValueError("Neuron mesh is empty.")
 
-    neuron_trace = go.Mesh3d(
-        x=neuron_mesh.vertices[:, 0],
-        y=neuron_mesh.vertices[:, 1],
-        z=neuron_mesh.vertices[:, 2],
-        i=neuron_mesh.faces[:, 0],
-        j=neuron_mesh.faces[:, 1],
-        k=neuron_mesh.faces[:, 2],
-        color='lightgray',
-        opacity=0.3,
-        name="Neuron Mesh",
-        showscale=False
-    )
+        neuron_trace = go.Mesh3d(
+            x=neuron_mesh.vertices[:, 0],
+            y=neuron_mesh.vertices[:, 1],
+            z=neuron_mesh.vertices[:, 2],
+            i=neuron_mesh.faces[:, 0],
+            j=neuron_mesh.faces[:, 1],
+            k=neuron_mesh.faces[:, 2],
+            color='lightgray',
+            opacity=neuron_opacity,
+            name="Neuron Mesh",
+            showscale=False
+        )
+        data.append(neuron_trace)
 
     if verbose:
         print(f"Computing colors using {colormap} over {color_by or '[default gray]'}")
@@ -116,8 +121,9 @@ def plotly_vesicles_on_neuron(
         text=df["vesicle_id"] if "vesicle_id" in df.columns else None,
         hoverinfo='text'
     )
+    data.append(scatter_trace)
 
-    fig = go.Figure(data=[neuron_trace, scatter_trace])
+    fig = go.Figure(data=data)
     fig.update_layout(
         scene=dict(xaxis_title='x', yaxis_title='y', zaxis_title='z', aspectmode='data'),
         title=f"Vesicles on Neuron Mesh ({filter_sample_id})" if filter_sample_id else "Vesicles on Neuron Mesh",
