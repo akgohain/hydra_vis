@@ -13,6 +13,7 @@ def extract_vesicle_data(
     types_dir=None,
     compute_neighbors=False,
     neighbor_radius_nm=500.0,
+    voxel_dims_nm=(30, 8, 8),
     verbose=True
 ):
     """
@@ -26,9 +27,15 @@ def extract_vesicle_data(
     - types_dir (str or Path or None): Directory with *_label.txt files (optional).
     - compute_neighbors (bool): Whether to compute neighbor densities (default: False).
     - neighbor_radius_nm (float): Radius in nanometers for KDTree neighbor ball (default: 500).
+    - voxel_dims_nm (tuple or list): Physical dimensions (x,y,z) of a voxel in nanometers.
+                                     Defaults to (30, 8, 8). Note that the function
+                                     internally swaps X and Z, so for KDTree calculations,
+                                     the order applied to coordinates (z_swapped, y, x_swapped)
+                                     will effectively be (voxel_x, voxel_y, voxel_z).
     - verbose (bool): Print status and preview (default: True).
 
-    ⚠️ Assumes voxel physical dimensions are (x=30nm, y=8nm, z=8nm). These may vary by dataset.
+    ⚠️ Assumes voxel physical dimensions are (x=30nm, y=8nm, z=8nm) by default.
+    These may vary by dataset. Ensure `voxel_dims_nm` is set correctly if your data differs.
 
     Returns:
     - df (pl.DataFrame): Extracted DataFrame with optional neighbor info.
@@ -146,10 +153,12 @@ def extract_vesicle_data(
     if compute_neighbors:
         if verbose:
             print(f"Computing neighbor counts within {neighbor_radius_nm}nm...")
+            print(f"Using voxel dimensions (X, Y, Z) for scaling: {voxel_dims_nm} nm")
 
         df = df.with_row_count("_row_id")
-
-        voxel_dims = np.array([30, 8, 8])
+        
+        voxel_dims_np = np.array(voxel_dims_nm)
+        
         all_counts = {}
         
         unique_sample_ids = df["sample_id"].unique().to_list()
@@ -159,7 +168,8 @@ def extract_vesicle_data(
             if verbose:
                 print(f"Processing sample for neighbor computation: {sample_id}")
             sample_df = df.filter(pl.col("sample_id") == sample_id)
-            coords_for_kdtree = sample_df.select(["z", "y", "x"]).to_numpy() * voxel_dims
+            
+            coords_for_kdtree = sample_df.select(["z", "y", "x"]).to_numpy() * voxel_dims_np
             
             row_ids = sample_df["_row_id"].to_numpy()
 
