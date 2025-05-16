@@ -1,4 +1,3 @@
-# TODO: tqdm logging
 # TODO: example txt files in readme
 
 from pathlib import Path
@@ -6,6 +5,7 @@ import re
 import polars as pl
 import numpy as np
 from scipy.spatial import KDTree
+from tqdm import tqdm
 
 def extract_vesicle_data(
     input_path,
@@ -37,6 +37,9 @@ def extract_vesicle_data(
     output_file = Path(output_path).resolve()
     all_files = []
 
+    if verbose:
+        print(f"Starting vesicle data extraction from: {input_path}")
+
     if input_path.is_file() and input_path.name.endswith("_mapping.txt"):
         all_files = [input_path]
     elif input_path.is_dir():
@@ -44,12 +47,21 @@ def extract_vesicle_data(
     else:
         raise ValueError("Input path must be a *_mapping.txt file or a directory of them.")
 
+    if not all_files:
+        raise ValueError(f"No *_mapping.txt files found in {input_path}")
+    
+    if verbose:
+        print(f"Found {len(all_files)} mapping files to process.")
+
     records = []
     pattern = re.compile(
         r'\((\d+\.?\d*), (\d+\.?\d*), (\d+\.?\d*)\): \(\'(\w+)\', (\w+_\d+), (\d+), (\d+\.?\d*(?:e[-+]?\d+)?)'
     )
 
-    for file_path in all_files:
+    file_iterator = tqdm(all_files, desc="Processing mapping files", unit="file") if verbose else all_files
+    for file_path in file_iterator:
+        if verbose:
+            print(f"Processing mapping file: {file_path.name}")
         vesicle_type = "lv" if "_lv_" in file_path.name else "sv"
         sample_id = file_path.stem.split('_')[0]
 
@@ -73,40 +85,63 @@ def extract_vesicle_data(
             })
 
     if not records:
-        raise ValueError("No valid vesicle entries found.")
+        raise ValueError("No valid vesicle entries found after parsing mapping files.")
+    
+    if verbose:
+        print(f"Extracted {len(records)} vesicle records.")
 
     df = pl.DataFrame(records)
 
+    if verbose:
+        print("Swapping X and Z coordinates.")
     df = df.rename({"x": "temp_x", "z": "x"})
     df = df.rename({"temp_x": "z"})
 
     if types_dir:
         types_dir = Path(types_dir).resolve()
+        if verbose:
+            print(f"Processing type labels from directory: {types_dir}")
         label_files = list(types_dir.glob("*_lv_label.txt")) + list(types_dir.glob("*_sv_label.txt"))
-        type_records = []
+        
+        if not label_files:
+            print(f"Warning: No label files found in {types_dir}. Skipping type assignment.")
+        else:
+            if verbose:
+                print(f"Found {len(label_files)} label files.")
+            type_records = []
+            type_pattern = re.compile(r'\((\d+):(\d+)\)')
 
-        type_pattern = re.compile(r'\((\d+):(\d+)\)')
+            label_iterator = tqdm(label_files, desc="Processing label files", unit="file") if verbose else label_files
+            for file_path in label_iterator:
+                if verbose:
+                    print(f"Processing label file: {file_path.name}")
+                vesicle_prefix = "lv" if "_lv_" in file_path.name else "sv"
+                sample_id = file_path.stem.split('_')[0]
 
-        for file_path in label_files:
-            vesicle_prefix = "lv" if "_lv_" in file_path.name else "sv"
-            sample_id = file_path.stem.split('_')[0]
+                with open(file_path, 'r') as f:
+                    content = f.read()
 
-            with open(file_path, 'r') as f:
-                content = f.read()
+                matches = type_pattern.findall(content)
 
-            matches = type_pattern.findall(content)
+                for vesicle_num, type_val in matches:
+                    vesicle_id = f"{vesicle_prefix}_{vesicle_num}"
+                    type_records.append({
+                        "sample_id": sample_id,
+                        "vesicle_id": vesicle_id,
+                        "type": int(type_val)
+                    })
+            
+            if type_records:
+                df_types = pl.DataFrame(type_records)
+                df = df.join(df_types, on=["sample_id", "vesicle_id"], how="left")
+                df = df.with_columns(pl.col("type").fill_null(0))
+                if verbose:
+                    print("Joined type labels with main data. Filled missing types with 0.")
+            else:
+                if verbose:
+                    print("No type records extracted from label files. Skipping type join.")
+                df = df.with_columns(pl.lit(0).alias("type"))
 
-            for vesicle_num, type_val in matches:
-                vesicle_id = f"{vesicle_prefix}_{vesicle_num}"
-                type_records.append({
-                    "sample_id": sample_id,
-                    "vesicle_id": vesicle_id,
-                    "type": int(type_val)
-                })
-
-        df_types = pl.DataFrame(type_records)
-        df = df.join(df_types, on=["sample_id", "vesicle_id"], how="left")
-        df = df.with_columns(pl.col("type").fill_null(0))
 
     if compute_neighbors:
         if verbose:
@@ -116,24 +151,34 @@ def extract_vesicle_data(
 
         voxel_dims = np.array([30, 8, 8])
         all_counts = {}
+        
+        unique_sample_ids = df["sample_id"].unique().to_list()
+        sample_iterator = tqdm(unique_sample_ids, desc="Computing neighbors per sample", unit="sample") if verbose else unique_sample_ids
 
-        for sample_id in df["sample_id"].unique().to_list():
+        for sample_id in sample_iterator:
+            if verbose:
+                print(f"Processing sample for neighbor computation: {sample_id}")
             sample_df = df.filter(pl.col("sample_id") == sample_id)
-            coords = sample_df.select(["x", "y", "z"]).to_numpy() * voxel_dims
+            coords_for_kdtree = sample_df.select(["z", "y", "x"]).to_numpy() * voxel_dims
+            
             row_ids = sample_df["_row_id"].to_numpy()
 
-            if len(coords) == 0:
+            if len(coords_for_kdtree) == 0:
+                if verbose:
+                    print(f"No coordinates for sample {sample_id}, skipping KDTree.")
                 continue
 
-            tree = KDTree(coords)
-            neighbors = tree.query_ball_point(coords, r=neighbor_radius_nm)
-
-            for i, ids in enumerate(neighbors):
-                all_counts[row_ids[i]] = len(ids) - 1
+            tree = KDTree(coords_for_kdtree)
+            neighbors = tree.query_ball_point(coords_for_kdtree, r=neighbor_radius_nm)
+            
+            for i, neighbor_indices in enumerate(neighbors):
+                all_counts[row_ids[i]] = len(neighbor_indices) - 1
 
         counts_list = [all_counts.get(i, 0) for i in range(df.height)]
         df = df.with_columns(pl.Series("neighbors_within_radius", counts_list))
         df = df.drop("_row_id")
+        if verbose:
+            print("Finished computing neighbor counts.")
 
     ext = output_file.suffix.lower()
     if ext == ".csv":
@@ -144,11 +189,13 @@ def extract_vesicle_data(
         if ext != ".parquet":
             output_file = output_file.with_suffix(".parquet")
             if verbose:
-                print(f"Unsupported extension. Saving as Parquet: {output_file}")
+                print(f"Unsupported output extension '{ext}'. Saving as Parquet: {output_file}")
         df.write_parquet(output_file)
 
     if verbose:
-        print(f"Data saved to: {output_file}")
+        print(f"Data successfully saved to: {output_file}")
+        print("DataFrame head:")
         print(df.head())
+        print("Extraction process complete.")
 
     return df
